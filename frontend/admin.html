@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LMS Admin Panel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="dashboard-shell">
+    <aside class="sidebar">
+      <p class="eyebrow">Cloud LMS</p>
+      <h1>Admin Panel</h1>
+      <nav>
+        <a class="active" href="admin.html">Manage LMS</a>
+        <a href="welcome.html">My Dashboard</a>
+      </nav>
+      <button id="logoutButton" class="secondary-button" type="button">Logout</button>
+    </aside>
+
+    <section class="content-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Database Records</p>
+          <h2>Registered LMS Users</h2>
+        </div>
+        <div class="button-row">
+          <button id="seedButton" class="secondary-button" type="button">Add Demo Data</button>
+          <button id="refreshButton" type="button">Refresh</button>
+        </div>
+      </div>
+
+      <div class="stat-grid" id="statsGrid">
+        <article><span>Total</span><strong>0</strong></article>
+        <article><span>Students</span><strong>0</strong></article>
+        <article><span>Teachers</span><strong>0</strong></article>
+        <article><span>Admins</span><strong>0</strong></article>
+      </div>
+
+      <p id="adminMessage" class="message" aria-live="polite"></p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Profile</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Description</th>
+              <th>Created At</th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody">
+            <tr>
+              <td colspan="5">Loading users...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <section class="form-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Courses</p>
+            <h2>Create or Update Course</h2>
+          </div>
+        </div>
+        <form id="courseForm" class="admin-form">
+          <input id="courseId" type="hidden">
+
+          <label for="courseTitle">Course title</label>
+          <input id="courseTitle" type="text" required>
+
+          <label for="courseDescription">Course description</label>
+          <textarea id="courseDescription" rows="4" maxlength="1000" required></textarea>
+
+          <label for="teacherSelect">Course teacher</label>
+          <select id="teacherSelect" required></select>
+
+          <div class="button-row">
+            <button type="submit">Save Course</button>
+            <button id="clearCourseButton" class="secondary-button" type="button">Clear</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="form-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Enrollment</p>
+            <h2>Enroll Student in Course</h2>
+          </div>
+        </div>
+        <form id="enrollmentForm" class="admin-form">
+          <label for="courseSelect">Course</label>
+          <select id="courseSelect" required></select>
+
+          <label for="studentSelect">Student</label>
+          <select id="studentSelect" required></select>
+
+          <button type="submit">Enroll Student</button>
+        </form>
+      </section>
+
+      <section>
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Course Records</p>
+            <h2>Courses from Database</h2>
+          </div>
+        </div>
+        <div id="coursesList" class="record-grid"></div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE_URL = "http://localhost:8000/api";
+
+    const token = localStorage.getItem("token");
+    const isAdmin = localStorage.getItem("is_admin");
+    const usersTableBody = document.getElementById("usersTableBody");
+    const adminMessage = document.getElementById("adminMessage");
+    const statsGrid = document.getElementById("statsGrid");
+    const coursesList = document.getElementById("coursesList");
+    const teacherSelect = document.getElementById("teacherSelect");
+    const studentSelect = document.getElementById("studentSelect");
+    const courseSelect = document.getElementById("courseSelect");
+    const courseForm = document.getElementById("courseForm");
+    const enrollmentForm = document.getElementById("enrollmentForm");
+    const courseId = document.getElementById("courseId");
+    const courseTitle = document.getElementById("courseTitle");
+    const courseDescription = document.getElementById("courseDescription");
+
+    let latestCourses = [];
+
+    if (!token || isAdmin !== "true") {
+      window.location.href = "index.html";
+    }
+
+    function logout() {
+      localStorage.clear();
+      window.location.href = "index.html";
+    }
+
+    async function apiFetch(path, options = {}) {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(options.headers || {})
+        }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401 || response.status === 403) {
+        logout();
+        return null;
+      }
+      if (!response.ok) throw new Error(data.detail || "Request failed.");
+      return data;
+    }
+
+    function showMessage(text, type = "success") {
+      adminMessage.textContent = text;
+      adminMessage.className = `message ${type}`;
+    }
+
+    function formatDate(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    }
+
+    function roleLabel(role) {
+      return role ? role.charAt(0).toUpperCase() + role.slice(1) : "Student";
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function imageUrl(user) {
+      return user.image_url ? `http://localhost:8000${user.image_url}` : "";
+    }
+
+    function renderStats(stats) {
+      const values = [
+        ["Total", stats.total || 0],
+        ["Students", stats.student || 0],
+        ["Teachers", stats.teacher || 0],
+        ["Admins", stats.admin || 0]
+      ];
+
+      statsGrid.innerHTML = values.map(([label, value]) => `
+        <article>
+          <span>${label}</span>
+          <strong>${value}</strong>
+        </article>
+      `).join("");
+    }
+
+    function renderUsers(users) {
+      if (!users.length) {
+        usersTableBody.innerHTML = '<tr><td colspan="5">No users found.</td></tr>';
+        return;
+      }
+
+      usersTableBody.innerHTML = users.map((user) => {
+        const avatar = user.has_image
+          ? `<img class="avatar" src="${imageUrl(user)}" alt="">`
+          : `<span class="avatar avatar-fallback">${user.email.charAt(0).toUpperCase()}</span>`;
+
+        return `
+          <tr>
+            <td>${avatar}</td>
+            <td>${escapeHtml(user.email)}</td>
+            <td><span class="role-pill ${user.role}">${roleLabel(user.role)}</span></td>
+            <td>${escapeHtml(user.description)}</td>
+            <td>${formatDate(user.created_at)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function fillSelect(select, items, placeholder) {
+      select.innerHTML = `<option value="">${placeholder}</option>` + items.map((item) => (
+        `<option value="${item.id}">${escapeHtml(item.email)}</option>`
+      )).join("");
+    }
+
+    function fillCourseSelect(courses) {
+      courseSelect.innerHTML = '<option value="">Select course</option>' + courses.map((course) => (
+        `<option value="${course.id}">${escapeHtml(course.title)}</option>`
+      )).join("");
+    }
+
+    function renderCourses(courses) {
+      latestCourses = courses;
+      fillCourseSelect(courses);
+
+      if (!courses.length) {
+        coursesList.innerHTML = '<article class="empty-state">No courses found. Add demo data or create a course.</article>';
+        return;
+      }
+
+      coursesList.innerHTML = courses.map((course) => `
+        <article class="record-card">
+          <span>Course #${course.id}</span>
+          <h3>${escapeHtml(course.title)}</h3>
+          <p>${escapeHtml(course.description || "No description added.")}</p>
+          <small>Teacher: ${escapeHtml(course.teacher_email)} | Students: ${course.student_count}</small>
+          <button type="button" data-course-id="${course.id}">Edit</button>
+        </article>
+      `).join("");
+
+      coursesList.querySelectorAll("button[data-course-id]").forEach((button) => {
+        button.addEventListener("click", () => editCourse(Number(button.dataset.courseId)));
+      });
+    }
+
+    function editCourse(id) {
+      const course = latestCourses.find((item) => item.id === id);
+      if (!course) return;
+      courseId.value = course.id;
+      courseTitle.value = course.title;
+      courseDescription.value = course.description || "";
+      teacherSelect.value = course.teacher_id;
+      courseTitle.focus();
+    }
+
+    function clearCourseForm() {
+      courseId.value = "";
+      courseForm.reset();
+    }
+
+    async function loadUsers() {
+      const data = await apiFetch("/admin/users");
+      if (!data) return;
+      renderStats(data.stats || {});
+      renderUsers(data.users || []);
+    }
+
+    async function loadLms() {
+      const data = await apiFetch("/admin/lms");
+      if (!data) return;
+      fillSelect(teacherSelect, data.teachers || [], "Select teacher");
+      fillSelect(studentSelect, data.students || [], "Select student");
+      renderCourses(data.courses || []);
+    }
+
+    async function refreshAll() {
+      try {
+        await loadUsers();
+        await loadLms();
+      } catch (error) {
+        showMessage(error.message, "error");
+      }
+    }
+
+    async function saveCourse(event) {
+      event.preventDefault();
+      try {
+        const payload = {
+          title: courseTitle.value,
+          description: courseDescription.value,
+          teacher_id: Number(teacherSelect.value)
+        };
+        const id = courseId.value;
+        const data = await apiFetch(id ? `/admin/courses/${id}` : "/admin/courses", {
+          method: id ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!data) return;
+        showMessage(data.message);
+        clearCourseForm();
+        await refreshAll();
+      } catch (error) {
+        showMessage(error.message, "error");
+      }
+    }
+
+    async function enrollStudent(event) {
+      event.preventDefault();
+      try {
+        const data = await apiFetch("/admin/enrollments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            course_id: Number(courseSelect.value),
+            student_id: Number(studentSelect.value)
+          })
+        });
+        if (!data) return;
+        showMessage(data.message);
+        enrollmentForm.reset();
+        await refreshAll();
+      } catch (error) {
+        showMessage(error.message, "error");
+      }
+    }
+
+    async function seedDemoData() {
+      try {
+        const data = await apiFetch("/admin/demo-data", { method: "POST" });
+        if (!data) return;
+        showMessage(`${data.message} Demo password: ${data.demo_password}`);
+        await refreshAll();
+      } catch (error) {
+        showMessage(error.message, "error");
+      }
+    }
+
+    document.getElementById("logoutButton").addEventListener("click", logout);
+    document.getElementById("refreshButton").addEventListener("click", refreshAll);
+    document.getElementById("seedButton").addEventListener("click", seedDemoData);
+    document.getElementById("clearCourseButton").addEventListener("click", clearCourseForm);
+    courseForm.addEventListener("submit", saveCourse);
+    enrollmentForm.addEventListener("submit", enrollStudent);
+    refreshAll();
+  </script>
+</body>
+</html>

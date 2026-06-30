@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LMS Portal Access</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="split-shell">
+    <section class="brand-panel">
+      <p class="eyebrow">Cloud LMS</p>
+      <h1>Learning portal connected to FastAPI and AWS RDS SQL Server.</h1>
+      <div class="feature-grid">
+        <div>
+          <strong>Students</strong>
+          <span>Register and access your learning dashboard.</span>
+        </div>
+        <div>
+          <strong>Teachers</strong>
+          <span>Join the system with a teaching role.</span>
+        </div>
+        <div>
+          <strong>Admins</strong>
+          <span>View registered users and database records.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="auth-card">
+      <div class="tabs" role="tablist" aria-label="Authentication tabs">
+        <button class="tab-button active" id="signupTab" type="button">Register</button>
+        <button class="tab-button" id="loginTab" type="button">Login</button>
+      </div>
+
+      <form id="signupForm" class="auth-form">
+        <h2>Create LMS Account</h2>
+
+        <label for="signupEmail">Email</label>
+        <input id="signupEmail" name="email" type="email" autocomplete="email" required>
+
+        <label for="signupPassword">Password</label>
+        <input id="signupPassword" name="password" type="password" autocomplete="new-password" minlength="8" required>
+
+        <label for="signupRole">Role</label>
+        <select id="signupRole" name="role" required>
+          <option value="student">Student</option>
+          <option value="teacher">Teacher</option>
+          <option value="admin">Admin</option>
+        </select>
+
+        <label for="signupDescription">Short description</label>
+        <textarea id="signupDescription" name="description" rows="4" maxlength="1000" placeholder="Example: Student learning AWS database integration"></textarea>
+
+        <label for="profileImage">Profile image</label>
+        <input id="profileImage" name="profile_image" type="file" accept="image/*">
+        <p class="hint">Image is saved directly in SQL Server for this lab project.</p>
+
+        <button id="signupButton" type="submit">Create account</button>
+        <p id="signupMessage" class="message" aria-live="polite"></p>
+      </form>
+
+      <form id="loginForm" class="auth-form hidden">
+        <h2>Login to LMS</h2>
+
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" name="email" type="email" autocomplete="email" required>
+
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+
+        <button id="loginButton" type="submit">Login</button>
+        <p id="loginMessage" class="message" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <div id="loadingOverlay" class="loading-overlay hidden" aria-live="polite" aria-busy="true">
+    <div class="loading-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <strong id="loadingTitle">Logging in</strong>
+      <span id="loadingText">Checking your email and password...</span>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE_URL = "http://localhost:8000/api";
+
+    const signupTab = document.getElementById("signupTab");
+    const loginTab = document.getElementById("loginTab");
+    const signupForm = document.getElementById("signupForm");
+    const loginForm = document.getElementById("loginForm");
+    const signupMessage = document.getElementById("signupMessage");
+    const loginMessage = document.getElementById("loginMessage");
+    const signupButton = document.getElementById("signupButton");
+    const loginButton = document.getElementById("loginButton");
+    const loadingOverlay = document.getElementById("loadingOverlay");
+    const loadingTitle = document.getElementById("loadingTitle");
+    const loadingText = document.getElementById("loadingText");
+
+    function showMessage(element, text, type) {
+      element.textContent = text;
+      element.className = `message ${type}`;
+    }
+
+    function switchTab(activeTab) {
+      const showSignup = activeTab === "signup";
+      signupTab.classList.toggle("active", showSignup);
+      loginTab.classList.toggle("active", !showSignup);
+      signupForm.classList.toggle("hidden", !showSignup);
+      loginForm.classList.toggle("hidden", showSignup);
+      signupMessage.textContent = "";
+      loginMessage.textContent = "";
+    }
+
+    function setLoading(show, title = "Logging in", text = "Checking your email and password...") {
+      loadingTitle.textContent = title;
+      loadingText.textContent = text;
+      loadingOverlay.classList.toggle("hidden", !show);
+    }
+
+    function setButtonLoading(button, loading, loadingTextValue, normalText) {
+      button.disabled = loading;
+      button.textContent = loading ? loadingTextValue : normalText;
+    }
+
+    async function postJson(path, body) {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Request failed.");
+      return data;
+    }
+
+    async function postForm(path, formData) {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        method: "POST",
+        body: formData
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Request failed.");
+      return data;
+    }
+
+    function saveSession(data) {
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("is_admin", String(Boolean(data.user.is_admin)));
+      localStorage.setItem("email", data.user.email);
+      localStorage.setItem("role", data.user.role || "student");
+    }
+
+    signupTab.addEventListener("click", () => switchTab("signup"));
+    loginTab.addEventListener("click", () => switchTab("login"));
+
+    signupForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(signupForm);
+
+      try {
+        setButtonLoading(signupButton, true, "Creating account...", "Create account");
+        const data = await postForm("/signup", formData);
+        showMessage(signupMessage, `${data.message} You can login now.`, "success");
+        signupForm.reset();
+        switchTab("login");
+      } catch (error) {
+        showMessage(signupMessage, error.message, "error");
+      } finally {
+        setButtonLoading(signupButton, false, "Creating account...", "Create account");
+      }
+    });
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const email = document.getElementById("loginEmail").value;
+      const password = document.getElementById("loginPassword").value;
+
+      try {
+        showMessage(loginMessage, "Checking credentials...", "info");
+        setButtonLoading(loginButton, true, "Logging in...", "Login");
+        setLoading(true, "Logging in", "Checking your email and password...");
+        const data = await postJson("/login", { email, password });
+        saveSession(data);
+        setLoading(true, "Login successful", "Opening your LMS dashboard...");
+        showMessage(loginMessage, "Login successful. Redirecting...", "success");
+        const destination = data.user.is_admin ? "admin.html" : "welcome.html";
+        setTimeout(() => {
+          window.location.href = destination;
+        }, 450);
+      } catch (error) {
+        setLoading(false);
+        showMessage(loginMessage, error.message, "error");
+        setButtonLoading(loginButton, false, "Logging in...", "Login");
+      }
+    });
+  </script>
+</body>
+</html>

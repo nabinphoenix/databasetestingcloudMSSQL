@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LMS Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="dashboard-shell">
+    <aside class="sidebar">
+      <p class="eyebrow">Cloud LMS</p>
+      <h1>Dashboard</h1>
+      <nav>
+        <a class="active" href="welcome.html">Overview</a>
+        <a id="adminLink" class="hidden" href="admin.html">Admin Users</a>
+      </nav>
+      <button id="logoutButton" class="secondary-button" type="button">Logout</button>
+    </aside>
+
+    <section class="content-panel">
+      <div class="profile-hero">
+        <div id="profileImageBox" class="profile-image"></div>
+        <div>
+          <p class="eyebrow" id="roleText">Student</p>
+          <h2 id="emailText">Loading profile...</h2>
+          <p id="createdText" class="muted"></p>
+        </div>
+      </div>
+
+      <section class="form-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Profile</p>
+            <h2>About Me</h2>
+          </div>
+          <button id="saveDescriptionButton" type="button">Save</button>
+        </div>
+        <textarea id="descriptionInput" rows="4" maxlength="1000" placeholder="Write your LMS profile description"></textarea>
+        <p id="profileMessage" class="message" aria-live="polite"></p>
+      </section>
+
+      <div class="course-grid">
+        <article>
+          <span>Current Status</span>
+          <strong>Active LMS Account</strong>
+          <p>Your account record is loaded from AWS RDS SQL Server through FastAPI.</p>
+        </article>
+        <article>
+          <span>Role Access</span>
+          <strong id="roleAccessText">Learner Workspace</strong>
+          <p>Students see enrolled courses, teachers see assigned courses, admins see all courses.</p>
+        </article>
+        <article>
+          <span>Profile Image</span>
+          <strong id="imageStatusText">Checking</strong>
+          <p>Uploaded images are stored directly in the SQL Server users table.</p>
+        </article>
+      </div>
+
+      <section>
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Courses</p>
+            <h2 id="courseHeading">My Courses</h2>
+          </div>
+          <button id="refreshButton" type="button">Refresh</button>
+        </div>
+        <div id="coursesList" class="record-grid"></div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE_URL = "http://localhost:8000/api";
+
+    const token = localStorage.getItem("token");
+    const emailText = document.getElementById("emailText");
+    const roleText = document.getElementById("roleText");
+    const createdText = document.getElementById("createdText");
+    const profileImageBox = document.getElementById("profileImageBox");
+    const profileMessage = document.getElementById("profileMessage");
+    const roleAccessText = document.getElementById("roleAccessText");
+    const imageStatusText = document.getElementById("imageStatusText");
+    const adminLink = document.getElementById("adminLink");
+    const descriptionInput = document.getElementById("descriptionInput");
+    const coursesList = document.getElementById("coursesList");
+    const courseHeading = document.getElementById("courseHeading");
+
+    if (!token) {
+      window.location.href = "index.html";
+    }
+
+    function logout() {
+      localStorage.clear();
+      window.location.href = "index.html";
+    }
+
+    function roleLabel(role) {
+      return role ? role.charAt(0).toUpperCase() + role.slice(1) : "Student";
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function formatDate(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    }
+
+    async function apiFetch(path, options = {}) {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(options.headers || {})
+        }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        logout();
+        return null;
+      }
+      if (!response.ok) throw new Error(data.detail || "Request failed.");
+      return data;
+    }
+
+    function renderProfile(profile) {
+      const role = profile.role || "student";
+      emailText.textContent = profile.email;
+      roleText.textContent = roleLabel(role);
+      descriptionInput.value = profile.description || "";
+      createdText.textContent = profile.created_at ? `Joined ${formatDate(profile.created_at)}` : "";
+      roleAccessText.textContent = role === "teacher" ? "Teacher Workspace" : role === "admin" ? "Admin Workspace" : "Learner Workspace";
+      courseHeading.textContent = role === "teacher" ? "Courses I Teach" : role === "admin" ? "All Courses" : "My Enrolled Courses";
+      imageStatusText.textContent = profile.has_image ? "Stored in Database" : "No Image Uploaded";
+
+      if (profile.is_admin) {
+        adminLink.classList.remove("hidden");
+      }
+
+      if (profile.has_image && profile.image_url) {
+        profileImageBox.innerHTML = `<img src="http://localhost:8000${profile.image_url}" alt="">`;
+      } else {
+        profileImageBox.textContent = profile.email.charAt(0).toUpperCase();
+      }
+    }
+
+    function renderCourses(courses) {
+      if (!courses.length) {
+        coursesList.innerHTML = '<article class="empty-state">No courses found for this account yet.</article>';
+        return;
+      }
+
+      coursesList.innerHTML = courses.map((course) => `
+        <article class="record-card">
+          <span>Course</span>
+          <h3>${escapeHtml(course.title)}</h3>
+          <p>${escapeHtml(course.description || "No description added.")}</p>
+          <small>Teacher: ${escapeHtml(course.teacher_email)} | Students: ${course.student_count}</small>
+        </article>
+      `).join("");
+    }
+
+    async function loadDashboard() {
+      try {
+        const profile = await apiFetch("/users/me");
+        if (!profile) return;
+        renderProfile(profile);
+
+        const overview = await apiFetch("/lms/overview");
+        if (!overview) return;
+        renderCourses(overview.courses || []);
+        profileMessage.textContent = "";
+      } catch (error) {
+        profileMessage.textContent = error.message;
+        profileMessage.className = "message error";
+      }
+    }
+
+    async function saveDescription() {
+      try {
+        const data = await apiFetch("/users/me/description", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description: descriptionInput.value })
+        });
+        if (!data) return;
+        profileMessage.textContent = data.message;
+        profileMessage.className = "message success";
+      } catch (error) {
+        profileMessage.textContent = error.message;
+        profileMessage.className = "message error";
+      }
+    }
+
+    document.getElementById("logoutButton").addEventListener("click", logout);
+    document.getElementById("refreshButton").addEventListener("click", loadDashboard);
+    document.getElementById("saveDescriptionButton").addEventListener("click", saveDescription);
+    loadDashboard();
+  </script>
+</body>
+</html>
