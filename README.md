@@ -83,13 +83,55 @@ Replace:
 
 Using `/32` allows only your current IP address to access the database.
 
-### 3.4 Check the DB subnet group
+### 3.4 Create a DB Subnet Group
+
+Before creating the RDS instance, check if a DB subnet group already exists:
 
 ```powershell
 aws rds describe-db-subnet-groups
 ```
 
-Most AWS Academy Learner Lab accounts already include a `default` DB subnet group.
+**If the result shows an empty list `"DBSubnetGroups": []`**, you need to create one manually.
+RDS does not automatically use your default VPC subnets — you must define a subnet group first.
+
+#### Step 1: Get your default VPC ID
+
+```powershell
+aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text
+```
+
+#### Step 2: Get two subnet IDs from that VPC (across different AZs)
+
+```powershell
+aws ec2 describe-subnets --filters "Name=vpc-id,Values=YOUR_VPC_ID" --query "Subnets[*].[SubnetId,AvailabilityZone]" --output table
+```
+
+Pick any two subnets from **different availability zones** (e.g. one from `us-east-1a` and one from `us-east-1b`).
+
+#### Step 3: Create the subnet group
+
+```powershell
+aws rds create-db-subnet-group --db-subnet-group-name mssql-subnet-group --db-subnet-group-description "MSSQL subnet group" --subnet-ids YOUR_SUBNET_ID_1 YOUR_SUBNET_ID_2
+```
+
+> ⚠️ Do not name it `default` — that name is reserved by AWS RDS and will be rejected.
+> Use `mssql-subnet-group` or any other name.
+
+**If the result already shows a subnet group**, note its name and use it directly in the next step.
+
+---
+
+### 3.5 Create the RDS SQL Server instance
+
+Use the subnet group name from step 3.4 (`mssql-subnet-group` if you just created one,
+or the existing name from `describe-db-subnet-groups`):
+
+```powershell
+aws rds create-db-instance --db-instance-identifier myapp-mssql --db-instance-class db.t3.micro --engine sqlserver-ex --engine-version 15.00.4153.1.v1 --master-username admin --master-user-password "ChangeThis1!" --allocated-storage 20 --vpc-security-group-ids YOUR_SECURITY_GROUP_ID --db-subnet-group-name mssql-subnet-group --publicly-accessible --license-model license-included
+```
+
+> ⚠️ **Password rules for RDS SQL Server:** avoid `@`, `/`, `"`, `'`, and spaces.
+> Stick to letters, numbers, and `!` or `_`. Example: `ChangeThis1!`
 
 ### 3.5 Create the RDS SQL Server instance
 
